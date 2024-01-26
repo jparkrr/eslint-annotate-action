@@ -11,33 +11,34 @@ const {GITHUB_WORKSPACE, OWNER, REPO, pullRequest} = constants
 export default async function getPullRequestChangedAnalyzedReport(
   reportJS: ESLintReport,
 ): Promise<AnalyzedESLintReport> {
-  const changedFiles = await getPullRequestFiles({
+  const changed = await getPullRequestFiles({
     owner: OWNER,
     repo: REPO,
     pull_number: pullRequest.number,
   })
+
+  const changedFiles = Object.keys(changed)
   // Separate lint reports for PR and non-PR files
-  const pullRequestFilesReportJS: ESLintReport = reportJS.filter((file) => {
+  const pullRequestFilesReportJS: ESLintReport = reportJS.reduce((acc, file) => {
     file.filePath = file.filePath.replace(GITHUB_WORKSPACE + '/', '')
-    return changedFiles.indexOf(file.filePath) !== -1
-  })
-  const nonPullRequestFilesReportJS: ESLintReport = reportJS.filter((file) => {
-    file.filePath = file.filePath.replace(GITHUB_WORKSPACE + '/', '')
-    return changedFiles.indexOf(file.filePath) === -1
-  })
+    if (changedFiles.includes(file.filePath)) {
+      acc.push({
+        ...file,
+        messages: file.messages.filter((message) => {
+          return changed[file.filePath].includes(message.line)
+        }),
+      })
+    }
+    return acc
+  }, [] as ESLintReport)
   const analyzedPullRequestReport = getAnalyzedReport(pullRequestFilesReportJS)
-  const analyzedNonPullRequestReport = getAnalyzedReport(nonPullRequestFilesReportJS)
   const combinedSummary = `
 ${analyzedPullRequestReport.summary} in pull request changed files.
-${analyzedNonPullRequestReport.summary} in files outside of the pull request.
 `
   const combinedMarkdown = `
-# Pull Request Changed Files ESLint Results:
+# Pull Request Changed Lines ESLint Results:
 **${analyzedPullRequestReport.summary}**
 ${analyzedPullRequestReport.markdown}
-# Non-Pull Request Changed Files ESLint Results:
-**${analyzedNonPullRequestReport.summary}**
-${analyzedNonPullRequestReport.markdown}
 `
   return {
     errorCount: analyzedPullRequestReport.errorCount,
