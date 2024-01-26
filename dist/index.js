@@ -23146,33 +23146,33 @@ const { GITHUB_WORKSPACE, OWNER, REPO, pullRequest } = constants_1.default;
  * @param reportJS a JavaScript representation of an ESLint JSON report
  */
 async function getPullRequestChangedAnalyzedReport(reportJS) {
-    const changedFiles = await (0, getPullRequestFiles_1.default)({
+    const changed = await (0, getPullRequestFiles_1.default)({
         owner: OWNER,
         repo: REPO,
         pull_number: pullRequest.number,
     });
+    const changedFiles = Object.keys(changed);
     // Separate lint reports for PR and non-PR files
-    const pullRequestFilesReportJS = reportJS.filter((file) => {
+    const pullRequestFilesReportJS = reportJS.reduce((acc, file) => {
         file.filePath = file.filePath.replace(GITHUB_WORKSPACE + '/', '');
-        return changedFiles.indexOf(file.filePath) !== -1;
-    });
-    const nonPullRequestFilesReportJS = reportJS.filter((file) => {
-        file.filePath = file.filePath.replace(GITHUB_WORKSPACE + '/', '');
-        return changedFiles.indexOf(file.filePath) === -1;
-    });
+        if (changedFiles.includes(file.filePath)) {
+            acc.push({
+                ...file,
+                messages: file.messages.filter((message) => {
+                    return changed[file.filePath].includes(message.line);
+                }),
+            });
+        }
+        return acc;
+    }, []);
     const analyzedPullRequestReport = (0, getAnalyzedReport_1.default)(pullRequestFilesReportJS);
-    const analyzedNonPullRequestReport = (0, getAnalyzedReport_1.default)(nonPullRequestFilesReportJS);
     const combinedSummary = `
 ${analyzedPullRequestReport.summary} in pull request changed files.
-${analyzedNonPullRequestReport.summary} in files outside of the pull request.
 `;
     const combinedMarkdown = `
-# Pull Request Changed Files ESLint Results:
+# Pull Request Changed Lines ESLint Results:
 **${analyzedPullRequestReport.summary}**
 ${analyzedPullRequestReport.markdown}
-# Non-Pull Request Changed Files ESLint Results:
-**${analyzedNonPullRequestReport.summary}**
-${analyzedNonPullRequestReport.markdown}
 `;
     return {
         errorCount: analyzedPullRequestReport.errorCount,
@@ -23199,6 +23199,63 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const constants_1 = __importDefault(__nccwpck_require__(9042));
 const { octokit } = constants_1.default;
+function parsePatchData(patchData) {
+    const finalDict = {};
+    for (const entry of patchData) {
+        if (entry.additions !== 0 && entry.patch) {
+            // console.log('entry', entry)
+            let patchArray = entry.patch.split('\n');
+            // clean patch array
+            patchArray = patchArray.filter((i) => i);
+            const lineArray = [];
+            let sublist = [];
+            for (const item of patchArray) {
+                // Grabs hunk annotation and strips out added lines
+                if (item.startsWith('@@ -')) {
+                    if (sublist.length > 0) {
+                        lineArray.push(sublist);
+                    }
+                    sublist = [item.split('+')[1].replace(/@@.*/, '').trim()];
+                    // We don't need removed lines ('-')
+                }
+                else if (!item.startsWith('-') && item !== '\\ No newline at end of file') {
+                    sublist.push(item);
+                }
+            }
+            if (sublist.length > 0) {
+                lineArray.push(sublist);
+                finalDict[entry.filename] = lineArray;
+            }
+        }
+    }
+    return finalDict;
+}
+function getLines(lineDict) {
+    const finalDict = {};
+    for (const [file_name, sublist] of Object.entries(lineDict)) {
+        const lineArray = [];
+        for (const array of sublist) {
+            let line_number = 0;
+            if (!array[0].includes(',')) {
+                line_number = parseInt(array[0], 10) - 1;
+            }
+            else {
+                line_number = parseInt(array[0].split(',')[0], 10) - 1;
+            }
+            for (const line of array) {
+                if (line.startsWith('+')) {
+                    lineArray.push(line_number);
+                }
+                line_number++;
+            }
+        }
+        // Remove deleted/renamed files (which appear as empty arrays)
+        if (lineArray.length > 0) {
+            finalDict[file_name] = lineArray;
+        }
+    }
+    return finalDict;
+}
 /**
  * Get an array of files changed in a pull request
  * @param options the parameters for octokit.pulls.listFiles
@@ -23209,8 +23266,9 @@ async function getPullRequestFiles(options) {
         // https://octokit.github.io/rest.js/v18#pulls-list-files
         // https://octokit.github.io/rest.js/v18#pagination
         const prFiles = await octokit.paginate('GET /repos/:owner/:repo/pulls/:pull_number/files', options);
-        const prFilesNames = prFiles.map((prFiles) => prFiles.filename);
-        return Promise.resolve(prFilesNames);
+        const addedLineData = parsePatchData(prFiles);
+        const addedLines = getLines(addedLineData);
+        return Promise.resolve(addedLines);
     }
     catch (error) {
         return Promise.reject(error);
