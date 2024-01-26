@@ -23037,13 +23037,6 @@ function getAnalyzedReport(files) {
         if (!messages.length) {
             continue;
         }
-        /**
-         * Increment the error and warning counts by
-         * the number of errors/warnings for this file
-         * and note files in the PR
-         */
-        errorCount += file.errorCount;
-        warningCount += file.warningCount;
         // Loop through all the error/warning messages for the file
         for (const lintMessage of messages) {
             // Pull out information about the error/warning message
@@ -23055,6 +23048,12 @@ function getAnalyzedReport(files) {
             const endColumn = lintMessage.endColumn ? lintMessage.endColumn : column;
             // Check if it a warning or error
             const isWarning = severity < 2;
+            if (isWarning) {
+                warningCount++;
+            }
+            else {
+                errorCount++;
+            }
             // Trim the absolute path prefix from the file path
             const filePathTrimmed = filePath.replace(`${GITHUB_WORKSPACE}/`, '');
             /**
