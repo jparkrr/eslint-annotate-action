@@ -68,18 +68,18 @@ describe('getPullRequestChangedAnalyzedReport', () => {
   })
 
   it('filters report to only PR-changed files', async () => {
-    mockGetPullRequestFiles.mockResolvedValue(['src/app.ts'])
+    mockGetPullRequestFiles.mockResolvedValue({ 'src/app.ts': [3] })
 
     const result = await getPullRequestChangedAnalyzedReport(mockReport)
 
     expect(result.errorCount).toBe(1)
     expect(result.annotations).toHaveLength(1)
     expect(result.annotations[0].path).toBe('src/app.ts')
-    expect(result.summary).toContain('pull request changed files')
+    expect(result.summary).toContain('pull request changed lines')
   })
 
   it('returns zero counts when no PR files match the report', async () => {
-    mockGetPullRequestFiles.mockResolvedValue(['src/completely-different.ts'])
+    mockGetPullRequestFiles.mockResolvedValue({ 'src/completely-different.ts': [1] })
 
     const result = await getPullRequestChangedAnalyzedReport(mockReport)
 
@@ -104,14 +104,43 @@ describe('getPullRequestChangedAnalyzedReport', () => {
       },
     ]
     // PR file list uses relative paths; with empty GITHUB_WORKSPACE, absolute path won't match
-    mockGetPullRequestFiles.mockResolvedValue(['src/app.ts'])
+    mockGetPullRequestFiles.mockResolvedValue({ 'src/app.ts': [3] })
 
     const result = await getPullRequestChangedAnalyzedReport(workspaceReport)
     expect(result.errorCount).toBe(0)
   })
 
+  it('filters messages to only PR-changed lines within a changed file', async () => {
+    mockGetPullRequestFiles.mockResolvedValue({ 'src/app.ts': [3] })
+
+    const result = await getPullRequestChangedAnalyzedReport([
+      {
+        ...mockReport[0],
+        messages: [
+          mockReport[0].messages[0],
+          {
+            ruleId: 'no-alert',
+            severity: 2,
+            message: 'Unexpected alert.',
+            line: 8,
+            column: 1,
+            endLine: 8,
+            endColumn: 6,
+          },
+        ],
+        errorCount: 2,
+      },
+    ])
+
+    expect(result.errorCount).toBe(1)
+    expect(result.annotations).toHaveLength(1)
+    expect(result.annotations[0].start_line).toBe(3)
+  })
+
   it('truncates markdown when it exceeds 65535 characters', async () => {
-    mockGetPullRequestFiles.mockResolvedValue(['src/app.ts'])
+    mockGetPullRequestFiles.mockResolvedValue({
+      'src/app.ts': Array.from({ length: 500 }, (_, i) => i + 1),
+    })
 
     const longReport: ESLintReport = [
       {

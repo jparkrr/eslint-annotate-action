@@ -21,16 +21,28 @@ export default async function getPullRequestChangedAnalyzedReport(
     throw new Error('getPullRequestChangedAnalyzedReport called outside of a pull_request event')
   }
 
-  const changedFiles = await getPullRequestFiles(OWNER, REPO, pullRequest.number)
+  const changedLinesByFile = await getPullRequestFiles(OWNER, REPO, pullRequest.number)
+  const changedFiles = Object.keys(changedLinesByFile)
 
   // Strip workspace prefix without mutating the original report entries
   const normalizedReport = reportJS.map((file) => ({ ...file, filePath: stripWorkspace(file.filePath) }))
 
-  const pullRequestFilesReport: ESLintReport = normalizedReport.filter((file) => changedFiles.includes(file.filePath))
+  const pullRequestFilesReport: ESLintReport = normalizedReport.reduce<ESLintReport>((acc, file) => {
+    const changedLines = changedLinesByFile[file.filePath]
+    if (!changedLines) {
+      return acc
+    }
+
+    acc.push({
+      ...file,
+      messages: file.messages.filter((message) => changedLines.includes(message.line)),
+    })
+    return acc
+  }, [])
 
   const analyzedPRReport = getAnalyzedReport(pullRequestFilesReport)
-  let summary = `${analyzedPRReport.summary} in pull request changed files.`
-  let markdown = `# Pull Request Changed Files ESLint Results:\n**${analyzedPRReport.summary}**\n${analyzedPRReport.markdown}`
+  let summary = `${analyzedPRReport.summary} in pull request changed lines.`
+  let markdown = `# Pull Request Changed Lines ESLint Results:\n**${analyzedPRReport.summary}**\n${analyzedPRReport.markdown}`
 
   if (!onlyChangedFiles) {
     const nonPRFilesReport: ESLintReport = normalizedReport.filter((file) => !changedFiles.includes(file.filePath))

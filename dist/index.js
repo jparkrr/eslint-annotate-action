@@ -37489,8 +37489,6 @@ function getAnalyzedReport(files, failOnWarningOverride) {
         if (!messages.length) {
             continue;
         }
-        errorCount += file.errorCount;
-        warningCount += file.warningCount;
         for (const lintMessage of messages) {
             const { column, severity, ruleId, message } = lintMessage;
             let { line } = lintMessage;
@@ -37510,6 +37508,12 @@ function getAnalyzedReport(files, failOnWarningOverride) {
             const endLine = lintMessage.endLine !== undefined ? lintMessage.endLine : line;
             const endColumn = lintMessage.endColumn !== undefined ? lintMessage.endColumn : column;
             const isWarning = severity < 2;
+            if (isWarning) {
+                warningCount += 1;
+            }
+            else {
+                errorCount += 1;
+            }
             // Strip the workspace prefix only when GITHUB_WORKSPACE is set and the path starts with it
             const filePathTrimmed = GITHUB_WORKSPACE$1 && filePath.startsWith(GITHUB_WORKSPACE$1)
                 ? filePath.slice(GITHUB_WORKSPACE$1.length + 1)
@@ -37648,8 +37652,36 @@ async function addAnnotationsToStatusCheck(annotations, checkId) {
     }
 }
 
+function parsePatch(patch) {
+    const changedLines = [];
+    const lines = patch.split('\n');
+    let currentLine = 0;
+    for (const line of lines) {
+        if (line.startsWith('@@')) {
+            const match = /@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+            if (!match) {
+                continue;
+            }
+            currentLine = Number.parseInt(match[1], 10);
+            continue;
+        }
+        if (!currentLine) {
+            continue;
+        }
+        if (line.startsWith('+')) {
+            changedLines.push(currentLine);
+            currentLine += 1;
+            continue;
+        }
+        if (line.startsWith('-') || line === '\\ No newline at end of file') {
+            continue;
+        }
+        currentLine += 1;
+    }
+    return changedLines;
+}
 /**
- * Returns the list of filenames changed in a pull request.
+ * Returns a map of changed filenames to changed line numbers in a pull request.
  */
 async function getPullRequestFiles(owner, repo, pullNumber) {
     const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
@@ -37657,7 +37689,17 @@ async function getPullRequestFiles(owner, repo, pullNumber) {
         repo,
         pull_number: pullNumber,
     });
-    return files.map((f) => f.filename);
+    return files.reduce((acc, file) => {
+        const pullRequestFile = file;
+        if (!pullRequestFile.patch || !pullRequestFile.additions) {
+            return acc;
+        }
+        const changedLines = parsePatch(pullRequestFile.patch);
+        if (changedLines.length > 0) {
+            acc[pullRequestFile.filename] = changedLines;
+        }
+        return acc;
+    }, {});
 }
 
 const { GITHUB_WORKSPACE, OWNER: OWNER$1, REPO: REPO$1, pullRequest: pullRequest$1, onlyChangedFiles: onlyChangedFiles$1 } = constants;
@@ -37674,13 +37716,24 @@ async function getPullRequestChangedAnalyzedReport(reportJS) {
     if (!pullRequest$1) {
         throw new Error('getPullRequestChangedAnalyzedReport called outside of a pull_request event');
     }
-    const changedFiles = await getPullRequestFiles(OWNER$1, REPO$1, pullRequest$1.number);
+    const changedLinesByFile = await getPullRequestFiles(OWNER$1, REPO$1, pullRequest$1.number);
+    const changedFiles = Object.keys(changedLinesByFile);
     // Strip workspace prefix without mutating the original report entries
     const normalizedReport = reportJS.map((file) => ({ ...file, filePath: stripWorkspace(file.filePath) }));
-    const pullRequestFilesReport = normalizedReport.filter((file) => changedFiles.includes(file.filePath));
+    const pullRequestFilesReport = normalizedReport.reduce((acc, file) => {
+        const changedLines = changedLinesByFile[file.filePath];
+        if (!changedLines) {
+            return acc;
+        }
+        acc.push({
+            ...file,
+            messages: file.messages.filter((message) => changedLines.includes(message.line)),
+        });
+        return acc;
+    }, []);
     const analyzedPRReport = getAnalyzedReport(pullRequestFilesReport);
-    let summary = `${analyzedPRReport.summary} in pull request changed files.`;
-    let markdown = `# Pull Request Changed Files ESLint Results:\n**${analyzedPRReport.summary}**\n${analyzedPRReport.markdown}`;
+    let summary = `${analyzedPRReport.summary} in pull request changed lines.`;
+    let markdown = `# Pull Request Changed Lines ESLint Results:\n**${analyzedPRReport.summary}**\n${analyzedPRReport.markdown}`;
     if (!onlyChangedFiles$1) {
         const nonPRFilesReport = normalizedReport.filter((file) => !changedFiles.includes(file.filePath));
         const analyzedNonPRReport = getAnalyzedReport(nonPRFilesReport);

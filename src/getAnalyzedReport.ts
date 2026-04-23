@@ -26,9 +26,6 @@ export default function getAnalyzedReport(files: ESLintReport, failOnWarningOver
       continue
     }
 
-    errorCount += file.errorCount
-    warningCount += file.warningCount
-
     for (const lintMessage of messages) {
       const { column, severity, ruleId, message } = lintMessage
       let { line } = lintMessage
@@ -52,6 +49,11 @@ export default function getAnalyzedReport(files: ESLintReport, failOnWarningOver
       const endColumn = lintMessage.endColumn !== undefined ? lintMessage.endColumn : column
 
       const isWarning = severity < 2
+      if (isWarning) {
+        warningCount += 1
+      } else {
+        errorCount += 1
+      }
 
       // Strip the workspace prefix only when GITHUB_WORKSPACE is set and the path starts with it
       const filePathTrimmed =

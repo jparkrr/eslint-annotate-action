@@ -28,13 +28,28 @@ describe('getPullRequestFiles', () => {
     jest.clearAllMocks()
   })
 
-  it('returns filenames from the GitHub API response', async () => {
-    const mockFiles = [{ filename: 'src/app.ts' }, { filename: 'src/utils.ts' }, { filename: 'README.md' }]
+  it('returns changed line numbers from the GitHub API response', async () => {
+    const mockFiles = [
+      {
+        filename: 'src/app.ts',
+        additions: 3,
+        patch: '@@ -1,3 +1,4 @@\n line 1\n-line 2\n+line 2 changed\n line 3\n+line 4',
+      },
+      {
+        filename: 'src/utils.ts',
+        additions: 1,
+        patch: '@@ -10,2 +10,3 @@\n line 10\n+line 11\n line 12',
+      },
+      { filename: 'README.md', additions: 0 },
+    ]
     mockPaginate.mockResolvedValue(mockFiles)
 
     const result = await getPullRequestFiles('ataylorme', 'eslint-annotate-github-action', 3)
 
-    expect(result).toEqual(['src/app.ts', 'src/utils.ts', 'README.md'])
+    expect(result).toEqual({
+      'src/app.ts': [2, 4],
+      'src/utils.ts': [11],
+    })
     expect(mockPaginate).toHaveBeenCalledWith(mockListFiles, {
       owner: 'ataylorme',
       repo: 'eslint-annotate-github-action',
@@ -42,11 +57,11 @@ describe('getPullRequestFiles', () => {
     })
   })
 
-  it('returns an empty array when the PR has no changed files', async () => {
+  it('returns an empty object when the PR has no changed files with patches', async () => {
     mockPaginate.mockResolvedValue([])
 
     const result = await getPullRequestFiles('ataylorme', 'eslint-annotate-github-action', 99)
-    expect(result).toEqual([])
+    expect(result).toEqual({})
   })
 
   it('propagates API errors', async () => {
