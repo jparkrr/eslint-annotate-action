@@ -37,6 +37,7 @@ import require$$5$3, { StringDecoder } from 'string_decoder';
 import * as child from 'child_process';
 import { setTimeout as setTimeout$1 } from 'timers';
 import 'stream';
+import { setTimeout as setTimeout$2 } from 'node:timers/promises';
 
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -37593,13 +37594,31 @@ async function openStatusCheck() {
     return response.id;
 }
 
+const RETRY_DELAYS_MS = [500, 1000, 2000];
 /**
- * Updates an existing GitHub check run.
+ * GitHub can briefly return 404 when updating the check this action just created.
+ * Give it time to become available, while still surfacing persistent failures.
  */
-async function updateStatusCheck(options) {
-    const response = await octokit.rest.checks.update(options);
-    return response.data;
-}
+const updateStatusCheck = async (options) => {
+    for (let attempt = 0;; attempt++) {
+        try {
+            const response = await octokit.rest.checks.update(options);
+            return response.data;
+        }
+        catch (error) {
+            const retryDelay = RETRY_DELAYS_MS[attempt];
+            if (typeof error !== 'object' ||
+                error === null ||
+                !('status' in error) ||
+                error.status !== 404 ||
+                retryDelay === undefined) {
+                throw error;
+            }
+            constants.core.info(`GitHub has not made check ${options.check_run_id} available yet; retrying in ${retryDelay}ms.`);
+            await setTimeout$2(retryDelay);
+        }
+    }
+};
 
 const { OWNER: OWNER$3, REPO: REPO$3, getTimestamp, checkName: checkName$1 } = constants;
 /**
